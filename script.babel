@@ -1,0 +1,163 @@
+// URLs to fetch education and counties data
+const educationUrl =
+  "https://cdn.freecodecamp.org/testable-projects-fcc/data/choropleth_map/for_user_education.json";
+const countiesUrl =
+  "https://cdn.freecodecamp.org/testable-projects-fcc/data/choropleth_map/counties.json";
+
+// Set dimensions for the SVG container
+const width = 960;
+const height = 600;
+
+// Define color scale for the map using a range of colors
+const colors = [
+  "#f7fbff",
+  "#deebf7",
+  "#c6dbef",
+  "#9ecae1",
+  "#6baed6",
+  "#4292c6",
+  "#2171b5",
+  "#08519c",
+  "#08306b"
+];
+
+// Create an SVG element in the specified container for the map
+const svg = d3
+  .select("#map-container")
+  .append("svg")
+  .attr("width", width)
+  .attr("height", height);
+
+// Create a tooltip element to display educational data on mouseover
+const tooltip = d3.select("#tooltip").style("opacity", 0);
+
+// Load the education and counties data asynchronously using Promise.all
+Promise.all([d3.json(educationUrl), d3.json(countiesUrl)]).then(
+  ([educationData, countiesData]) => {
+    // Log the loaded education and counties data for debugging
+    console.log("Education Data Loaded:", educationData);
+    console.log("Counties Data Loaded:", countiesData);
+
+    // Create a geographic path generator for drawing the counties
+    const path = d3.geoPath();
+
+    // Create a Map to associate FIPS codes with education data
+    const educationMap = new Map(educationData.map((d) => [String(d.fips), d]));
+    // console.log("Education Map Created:", educationMap);
+
+    // Calculate the minimum and maximum values for the education levels
+    const minEdu = d3.min(educationData, (d) => d.bachelorsOrHigher);
+    const maxEdu = d3.max(educationData, (d) => d.bachelorsOrHigher);
+    // console.log("Min Education:", minEdu, "Max Education:", maxEdu);
+
+    // Create a color scale based on education levels
+    const colorScale = d3
+      .scaleThreshold()
+      .domain(d3.range(minEdu, maxEdu, (maxEdu - minEdu) / (colors.length - 1)))
+      .range(colors);
+
+    // Draw the counties on the map using the geographical data
+    svg
+      .append("g")
+      .selectAll("path")
+      .data(
+        topojson.feature(countiesData, countiesData.objects.counties).features
+      )
+      .enter()
+      .append("path")
+      .attr("class", "county") // Assign class for styling
+      .attr("d", path) // Define the path for each county
+      .attr("data-fips", (d) => String(d.id)) // Store the FIPS code as a data attribute
+      .attr("data-education", (d) => {
+        const result = educationMap.get(String(d.id)); // Look up education data by FIPS code
+        return result ? result.bachelorsOrHigher : 0; // Return the education level or 0 if not found
+      })
+      .attr("fill", (d) => {
+        const result = educationMap.get(String(d.id)); // Look up education data for coloring
+        return result ? colorScale(result.bachelorsOrHigher) : "#ccc"; // Color based on education level, default to gray
+      })
+      .on("mouseover", (event, d) => {
+        console.log("d", d);
+        console.log("event", event);
+        // Event listener for mouseover on county paths
+        const fips = String(event.id); // Get the FIPS code of the hovered county
+
+        console.log("fips", fips);
+        const result = educationMap.get(fips); // Retrieve education data for the county
+        console.log("result", result);
+        const educationValue = result ? result.bachelorsOrHigher : 0; // Get the education level or 0 if not found
+        console.log("educationValue", educationValue);
+
+        // Log the hovered county's FIPS code and education data for debugging
+        // console.log("Mouseover County:", fips, "Education Data:", result);
+
+        // Update and display the tooltip with education information
+        tooltip
+          .style("opacity", 0.9) // Set tooltip opacity for visibility
+          .style("visibility", "visible") // Make the tooltip visible
+          .style("left", event.pageX + 10 + "px") // Position the tooltip horizontally based on mouse event
+          .style("top", event.pageY - 28 + "px") // Position the tooltip vertically based on mouse event
+          .attr("data-education", educationValue) // Set data-education attribute for accessibility
+          .html(
+            result
+              ? `${result.area_name}, ${result.state}: ${result.bachelorsOrHigher}%` // Tooltip content with county name and education percentage
+              : "No data" // Default message if no data is found
+          );
+      })
+      .on("mouseout", () => {
+        tooltip.style("opacity", 0).style("visibility", "hidden"); // Hide the tooltip on mouse out
+      });
+
+    // Define dimensions for the legend
+    const legendWidth = 300;
+    const legendHeight = 10;
+
+    // Create a legend group in the SVG for the color scale
+    const legend = svg
+      .append("g")
+      .attr("id", "legend")
+      .attr(
+        "transform",
+        `translate(${(width - legendWidth) / 2}, ${height - 40})` // Center the legend horizontally at the bottom
+      );
+
+    // Create a linear scale for the legend based on the min and max education values
+    const legendScale = d3
+      .scaleLinear()
+      .domain([minEdu, maxEdu])
+      .range([0, legendWidth]);
+
+    // Create an axis for the legend
+    const legendAxis = d3
+      .axisBottom(legendScale)
+      .tickSize(13) // Set tick size for the legend
+      .tickValues(colorScale.domain()) // Use the same domain as the color scale for ticks
+      .tickFormat((x) => Math.round(x) + "%"); // Format ticks as percentages
+
+    // Append rectangles to the legend for each color range
+    legend
+      .selectAll("rect")
+      .data(
+        colorScale.range().map((color) => {
+          const d = colorScale.invertExtent(color); // Invert the color scale to get the domain for each color
+          if (!d[0]) d[0] = legendScale.domain()[0]; // Ensure the start of the range is defined
+          if (!d[1]) d[1] = legendScale.domain()[1]; // Ensure the end of the range is defined
+          return d;
+        })
+      )
+      .enter()
+      .append("rect")
+      .attr("height", legendHeight) // Set height of the legend rectangles
+      .attr("x", (d) => legendScale(d[0])) // Set x position based on the start of the range
+      .attr("width", (d) => legendScale(d[1]) - legendScale(d[0])) // Set width based on the range
+      .attr("fill", (d) => colorScale(d[0])); // Fill color based on the color scale
+
+    // Append the axis to the legend
+    legend
+      .append("g")
+      .attr("transform", `translate(0, ${legendHeight})`) // Position the axis below the legend rectangles
+      .call(legendAxis) // Draw the legend axis
+      .select(".domain") // Remove the domain line for a cleaner look
+      .remove();
+  }
+);
